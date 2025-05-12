@@ -1,0 +1,37 @@
+name: Go Build and Test
+
+on:
+  push:
+    branches: [ main ] # Or your default branch name
+  pull_request:
+    branches: [ main ] # Or your default branch name
+
+jobs:
+
+  build:
+    name: Build and Test
+    runs-on: ubuntu-latest
+    steps:
+
+    - name: Set up Go
+      uses: actions/setup-go@v5 # Use the latest version
+      with:
+        go-version: '1.24.1' # Specify your target Go version (or use 'stable')
+      id: go
+
+    - name: Check out code into the Go module directory
+      uses: actions/checkout@v4 # Use the latest version
+
+    - name: Get dependencies
+      run: go get -v -t -d ./...
+
+    - name: Build
+      run: go build -v ./...
+
+    - name: Vet
+      run: go vet ./...
+
+    - name: Test
+      # Run tests without race detection for now, as we haven't implemented concurrency yet.
+      # We'll add '-race' later in Phase 3.
+      run: go test -v ./...
