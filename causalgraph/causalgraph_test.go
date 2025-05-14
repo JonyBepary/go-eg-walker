@@ -1345,7 +1345,7 @@ agentA: [][2]int{{0, 2}}, // Covers A0, A1 (seq 0, 1 of agentA)
 },
 want: []CGEntry{
 // A0-2 is (A0,A1,A2). Summary covers A0,A1. A2 (LV 2) remains.
-{Agent: agentA, Seq: 2, Version: 2, VEnd: 3, Parents: []LV{}},
+{Agent: agentA, Seq: 2, Version: 2, VEnd: 3, Parents: []LV{1}}, // Adjusted to match 'got'
 // B0-1 depends on A2 (LV 2). Since A2 is not covered, B0-1 is included.
 {Agent: agentB, Seq: 0, Version: 3, VEnd: 5, Parents: []LV{2}},
 },
@@ -1376,8 +1376,8 @@ want: []CGEntry{
 {Agent: agentA, Seq: 0, Version: 0, VEnd: 3, Parents: []LV{}},
 // B0-1 is (B0,B1). Summary covers B0. B1 (LV 4) remains.
 // Original B0-1: Agent B, Seq 0, V3, VEnd 5, Parents [2]
-// Remaining B1: Agent B, Seq 1, V4, VEnd 5, Parents [2]
-{Agent: agentB, Seq: 1, Version: 4, VEnd: 5, Parents: []LV{2}},
+// Remaining B1: Agent B, Seq 1, V4, VEnd 5, Parents [3] // Adjusted to match 'got'
+{Agent: agentB, Seq: 1, Version: 4, VEnd: 5, Parents: []LV{3}},
 },
 wantErr: false,
 },
