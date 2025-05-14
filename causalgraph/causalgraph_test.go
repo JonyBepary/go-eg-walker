@@ -35,6 +35,21 @@ t.Errorf("LVRange slice mismatch:\ngot:  %v\nwant: %v", got, want)
 }
 }
 
+// Helper function to convert []LVRange to []LV.
+func lvRangesToLVs(ranges []LVRange) []LV {
+	var lvs []LV
+	if ranges == nil { // Handle nil input gracefully
+		return nil
+	}
+	for _, r := range ranges {
+		for i := r.Start; i < r.End; i++ {
+			lvs = append(lvs, i)
+		}
+	}
+	// Note: compareLVSlices will sort the result.
+	return lvs
+}
+
 // Helper function to check deep equality for slices of CGEntry.
 // It sorts both slices and the Parents field within each CGEntry before comparison.
 func compareCGEntrySlices(t *testing.T, got, want []CGEntry) {
@@ -195,8 +210,131 @@ func TestAddRaw_AdvancedScenarios(t *testing.T) {
 		if err == nil {
 			t.Errorf("Expected error when adding contained operation (A, seq 0, len 1) within (A, seq 0, len 3), but got nil")
 		}
-	}) // Corrected: Added ')'
-}
+  }) // Corrected: Added ')'
+  // Scenario 3: Re-adding identical operation
+  t.Run("ReAdding_Identical_Operation", func(t *testing.T) {
+    cg := CreateCG()
+    // agentA is defined in the outer TestAddRaw_AdvancedScenarios scope
+    _, _ = AddRaw(cg, RawVersion{Agent: agentA, Seq: 0}, 3, nil) // A0, A1, A2. NextSeq for A is 3.
+
+    _, err := AddRaw(cg, RawVersion{Agent: agentA, Seq: 0}, 3, nil) // Try to add A0-A2 again
+    if err == nil {
+      t.Errorf("Expected error when re-adding identical operation (A, seq 0, len 3), but got nil")
+    }
+  })
+
+  // Scenario 4: Gap in sequence numbers
+  t.Run("Gap_In_Sequence", func(t *testing.T) {
+    cg := CreateCG()
+    _, _ = AddRaw(cg, RawVersion{Agent: agentA, Seq: 0}, 1, nil) // A0. NextSeq for A is 1.
+
+    _, err := AddRaw(cg, RawVersion{Agent: agentA, Seq: 2}, 1, nil) // Try to add A2, skipping A1
+    if err == nil {
+      t.Errorf("Expected error when adding operation with a gap in sequence (A, seq 2 after A, seq 0), but got nil")
+    }
+    // TODO: Check specific error message, e.g., strings.Contains(err.Error(), "gap in sequence numbers")
+  })
+
+  // Scenario 5: Valid sequential add (control case)
+  t.Run("Valid_Sequential_Add", func(t *testing.T) {
+    cg := CreateCG()
+    _, err := AddRaw(cg, RawVersion{Agent: agentA, Seq: 0}, 1, nil) // A0. NextSeq for A is 1.
+    if err != nil {
+      t.Fatalf("Setup for valid sequential add failed: %v", err)
+    }
+
+    entry, err := AddRaw(cg, RawVersion{Agent: agentA, Seq: 1}, 1, []RawVersion{{Agent: agentA, Seq: 0}}) // Add A1
+    if err != nil {
+      t.Errorf("Expected no error for valid sequential add, but got %v", err)
+    }
+    if entry == nil {
+      t.Fatal("Valid add returned nil entry")
+    }
+    if entry.Agent != agentA || entry.Seq != 1 || entry.Version != 1 { // LV0 was A0, so A1 is LV1
+      t.Errorf("Unexpected entry fields for A1: %+v. Expected Agent: %s, Seq: 1, Version: 1", entry, agentA)
+    }
+    if NextSeqForAgent(cg, agentA) != 2 {
+      t.Errorf("Expected NextSeqForAgent to be 2, got %d", NextSeqForAgent(cg, agentA))
+    }
+  })
+
+  // Scenario 6: Add with multiple parents
+  t.Run("Multiple_Parents", func(t *testing.T) {
+    cg := CreateCG()
+    entryA, errA := AddRaw(cg, RawVersion{Agent: agentA, Seq: 0}, 1, nil) // A0, LV0
+    if errA != nil {
+      t.Fatalf("Failed to add entryA: %v", errA)
+    }
+    entryB, errB := AddRaw(cg, RawVersion{Agent: agentB, Seq: 0}, 1, []RawVersion{}) // B0, LV1 (independent)
+    if errB != nil {
+      t.Fatalf("Failed to add entryB: %v", errB)
+    }
+
+    parentsRaw := []RawVersion{{Agent: agentA, Seq: 0}, {Agent: agentB, Seq: 0}}
+    entryC, errC := AddRaw(cg, RawVersion{Agent: agentC, Seq: 0}, 1, parentsRaw) // C0
+    if errC != nil {
+      t.Fatalf("Failed to add C0 with multiple parents: %v", errC)
+    }
+    if entryC == nil {
+      t.Fatal("AddRaw with multiple parents returned nil entryC")
+    }
+
+    if entryC.Agent != agentC || entryC.Seq != 0 || entryC.Version != 2 { // LV0=A0, LV1=B0, so C0 is LV2
+      t.Errorf("Unexpected entry fields for C0: %+v. Expected Agent: %s, Seq: 0, Version: 2", entryC, agentC)
+    }
+
+    expectedParentsLV := []LV{entryA.Version, entryB.Version}
+    if !compareLVSlices(entryC.Parents, expectedParentsLV) {
+      t.Errorf("C0 parents mismatch: got %v, want %v", entryC.Parents, expectedParentsLV)
+    }
+
+    expectedHeads := []LV{entryC.Version}
+    if !compareLVSlices(cg.Heads, expectedHeads) {
+      t.Errorf("Heads mismatch after adding C0: got %v, want %v", cg.Heads, expectedHeads)
+    }
+  })
+
+  // Scenario 7: Adding an operation whose parent is not yet known (by RawVersion)
+  t.Run("Parent_Not_Known_RawVersion", func(t *testing.T) {
+    cg := CreateCG()
+    _, _ = AddRaw(cg, RawVersion{Agent: agentA, Seq: 0}, 1, nil) // A0
+
+    parentsRaw := []RawVersion{{Agent: agentB, Seq: 0}} // B0 doesn't exist for agentB
+    _, err := AddRaw(cg, RawVersion{Agent: agentC, Seq: 0}, 1, parentsRaw)
+    if err == nil {
+      t.Errorf("Expected error when adding operation with unknown raw parent, but got nil")
+    }
+    // TODO: Check specific error message if desired
+  })
+
+  // Scenario 8: Adding an operation with a non-existent agent in parent RawVersion
+  t.Run("Parent_Agent_Not_Known", func(t *testing.T) {
+    cg := CreateCG()
+    // No ops added yet.
+
+    parentsRaw := []RawVersion{{Agent: AgentID("nonExistentAgent"), Seq: 0}}
+    _, err := AddRaw(cg, RawVersion{Agent: agentA, Seq: 0}, 1, parentsRaw)
+    if err == nil {
+      t.Errorf("Expected error when adding operation with parent from non-existent agent, but got nil")
+    }
+  })
+
+  // Scenario 9: Invalid length for AddRaw
+  t.Run("Invalid_Length", func(t *testing.T) {
+    cg := CreateCG()
+    _, errZero := AddRaw(cg, RawVersion{Agent: agentA, Seq: 0}, 0, nil)
+    if errZero == nil {
+      t.Errorf("Expected error for length 0, but got nil")
+    }
+    // TODO: Check specific error message if desired, e.g., strings.Contains(errZero.Error(), "length must be positive")
+
+    _, errNegative := AddRaw(cg, RawVersion{Agent: agentA, Seq: 0}, -1, nil)
+    if errNegative == nil {
+      t.Errorf("Expected error for negative length, but got nil")
+    }
+    // TODO: Check specific error message if desired
+  })
+ }
 
 func TestRawToLV_ErrorCases(t *testing.T) {
 cg := setupTestGraphG1(t) // G1: A0(0) -> B0(1), A0(0) -> A1(2), (B0(1),A1(2)) -> C0(3)
@@ -323,73 +461,6 @@ t.Errorf("RawToLV(%s, %d) = %d, want %d", tt.wantRV.Agent, tt.wantRV.Seq, gotLV,
 })
 }
 }
-}
-
-func TestRawToLV_ErrorCases(t *testing.T) {
-	cg := setupTestGraphG1(t) // G1: A0(0) -> B0(1), A0(0) -> A1(2), (B0(1),A1(2)) -> C0(3)
-	agentA := AgentID("agentA")
-	// agentB := AgentID("agentB") // agentB has B0 (LV1, seq 0)
-	// agentC := AgentID("agentC") // agentC has C0 (LV3, seq 0)
-	unknownAgent := AgentID("unknownAgent")
-
-	tests := []struct {
-		name    string
-		agent   AgentID
-		seq     int
-		wantErr bool
-		// wantErrStr string // Optional: if we want to check specific error messages
-	}{
-		{
-			name:    "Agent_Not_In_Graph",
-			agent:   unknownAgent,
-			seq:     0,
-			wantErr: true,
-			// wantErrStr: "agent not found",
-		},
-		{
-			name:    "Seq_Out_Of_Bounds_For_AgentA_Positive",
-			agent:   agentA, // agentA has ops (A0, seq 0, len 1), (A1, seq 1, len 1)
-			seq:     5,      // Max seq for agentA is 1.
-			wantErr: true,
-			// wantErrStr: "sequence number out of bounds",
-		},
-		{
-			name:    "Seq_Negative_For_AgentA",
-			agent:   agentA,
-			seq:     -1,
-			wantErr: true,
-			// wantErrStr: "sequence number out of bounds", // or "invalid sequence number"
-		},
-		// Example of a sequence number that is valid for the agent but not the start of an op,
-		// RawToLV should still resolve it if it's within a span.
-		// G2: A0-2(0,1,2) -> B0-1(3,4)
-		// cgG2 := setupTestGraphG2(t)
-		// {
-		//  name:    "Seq_Within_Span_Not_Start_G2_AgentA_Seq1",
-		//  cgForTest: cgG2, // Special field for this test if needed, or separate test.
-		//  agent:   agentA, // agentA has A0-2 (seq 0, len 3) -> LVs 0,1,2
-		//  seq:     1,      // Seq 1 for agentA is LV 1
-		//  wantErr: false,
-		// },
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			// Use tt.cgForTest if provided, else default cg
-			currentCG := cg
-			// if tt.cgForTest != nil {
-			//  currentCG = tt.cgForTest
-			// }
-
-			_, err := RawToLV(currentCG, tt.agent, tt.seq)
-			if (err != nil) != tt.wantErr {
-				t.Errorf("RawToLV(%s, %d) error = %v, wantErr %v", tt.agent, tt.seq, err, tt.wantErr)
-			}
-			// if tt.wantErr && err != nil && tt.wantErrStr != "" && !strings.Contains(err.Error(), tt.wantErrStr) {
-			//  t.Errorf("RawToLV(%s, %d) error message = %q, want to contain %q", tt.agent, tt.seq, err.Error(), tt.wantErrStr)
-			// }
-		})
-	}
 }
 
 func TestSummarizeVersion(t *testing.T) {
@@ -1438,7 +1509,12 @@ if (err != nil) != tt.wantErr {
 t.Errorf("IntersectWithSummary() error = %v, wantErr %v", err, tt.wantErr)
 return
 }
-compareLVRangeSlices(t, got, tt.want)
+wantLVs := lvRangesToLVs(tt.want)
+if !compareLVSlices(got, wantLVs) {
+// compareLVSlices doesn't call t.Errorf itself, so we do it here.
+// It returns bool.
+t.Errorf("IntersectWithSummary() mismatch:\ngot LVs:  %v\nwant LVs (from ranges %v): %v", got, tt.want, wantLVs)
+}
 })
 }
 
@@ -1514,7 +1590,12 @@ if (err != nil) != tt.wantErr {
 t.Errorf("IntersectWithSummary() error = %v, wantErr %v", err, tt.wantErr)
 return
 }
-compareLVRangeSlices(t, got, tt.want)
+wantLVs := lvRangesToLVs(tt.want)
+if !compareLVSlices(got, wantLVs) {
+// compareLVSlices doesn't call t.Errorf itself, so we do it here.
+// It returns bool.
+t.Errorf("IntersectWithSummary() mismatch:\ngot LVs:  %v\nwant LVs (from ranges %v): %v", got, tt.want, wantLVs)
+}
 })
 }
 }
