@@ -706,13 +706,28 @@ return false
 func IterVersionsBetween(cg *CausalGraph, from []LV, to LV,
 fn func(v LV, isParentOfPrev bool, isMerge bool) (stop bool, err error)) error {
 
+    if to < 0 || (cg.NextLV > 0 && to >= cg.NextLV) || (cg.NextLV == 0 && to != 0) {
+        // Allow to == 0 if cg.NextLV == 0 (empty graph, iterating towards nothing from nothing)
+        // but if cg.NextLV > 0, then to >= cg.NextLV is out of bounds.
+        // If cg.NextLV == 0 and to is not 0, it's out of bounds.
+        if !(cg.NextLV == 0 && to == 0) { // Special case: to=0 is valid for empty graph if from is also empty or contains 0
+             return fmt.Errorf("IterVersionsBetween: 'to' LV %d is out of bounds for graph with %d LVs", to, cg.NextLV)
+        }
+    }
+
+
 for _, fv := range from {
-if fv == to { return nil }
-    isToAncestorOfFrom, err := VersionContainsLV(cg, []LV{fv}, to)
+    if fv < 0 || (cg.NextLV > 0 && fv >= cg.NextLV) || (cg.NextLV == 0 && fv != 0) {
+        if !(cg.NextLV == 0 && fv == 0) {
+            return fmt.Errorf("IterVersionsBetween: 'from' LV %d is out of bounds for graph with %d LVs", fv, cg.NextLV)
+        }
+    }
+if fv == to { return nil } // If any 'from' is 'to', the range is empty or invalid in one interpretation.
+    isToAncestorOfFrom, err := VersionContainsLV(cg, []LV{fv}, to) // VersionContainsLV now has its own checks
     if err != nil {
         return fmt.Errorf("IterVersionsBetween: error checking ancestry for 'from' LV %d: %w", fv, err)
     }
-    if isToAncestorOfFrom {
+    if isToAncestorOfFrom { // If 'to' is an ancestor of any 'from', the range is invalid.
         return nil
     }
 }
