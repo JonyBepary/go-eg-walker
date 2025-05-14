@@ -194,8 +194,8 @@ func TestAddRaw_AdvancedScenarios(t *testing.T) {
 		_, err := AddRaw(cg, RawVersion{Agent: agentA, Seq: 0}, 1, nil) // Try to add A0 (subset)
 		if err == nil {
 			t.Errorf("Expected error when adding contained operation (A, seq 0, len 1) within (A, seq 0, len 3), but got nil")
-}
-}
+		}
+	}) // Corrected: Added ')'
 }
 
 func TestRawToLV_ErrorCases(t *testing.T) {
@@ -265,15 +265,17 @@ t.Errorf("RawToLV(%s, %d) error = %v, wantErr %v", tt.agent, tt.seq, err, tt.wan
 }
 }
 
-func TestSummarizeVersion(t *testing.T) {
-cg := CreateCG()
-		_, _ = AddRaw(cg, RawVersion{Agent: agentA, Seq: 0}, 3, nil) // A0, A1, A2. NextSeq for A is 3.
+// Scenario 3: Re-adding identical operation
+t.Run("ReAdding_Identical_Operation", func(t *testing.T) {
+	cg := CreateCG()
+	// agentA is defined in the outer TestAddRaw_AdvancedScenarios scope
+	_, _ = AddRaw(cg, RawVersion{Agent: agentA, Seq: 0}, 3, nil) // A0, A1, A2. NextSeq for A is 3.
 
-		_, err := AddRaw(cg, RawVersion{Agent: agentA, Seq: 0}, 3, nil) // Try to add A0-A2 again
-		if err == nil {
-			t.Errorf("Expected error when re-adding identical operation (A, seq 0, len 3), but got nil")
-		}
-	})
+	_, err := AddRaw(cg, RawVersion{Agent: agentA, Seq: 0}, 3, nil) // Try to add A0-A2 again
+	if err == nil {
+		t.Errorf("Expected error when re-adding identical operation (A, seq 0, len 3), but got nil")
+	}
+})
 
 	// Scenario 4: Gap in sequence numbers
 	t.Run("Gap_In_Sequence", func(t *testing.T) {
@@ -1447,16 +1449,6 @@ compareCGEntrySlices(t, got, tt.want)
 }
 
 for _, tt := range testsG2 {
-t.Run(tt.name, func(t *testing.T) {
-got, err := IntersectWithSummaryFull(tt.cg, tt.summary)
-if (err != nil) != tt.wantErr {
-t.Errorf("IntersectWithSummaryFull() error = %v, wantErr %v", err, tt.wantErr)
-return
-}
-compareCGEntrySlices(t, got, tt.want)
-})
-}
-}
 t.Run(tt.name, func(t *testing.T) {
 got, err := IntersectWithSummaryFull(tt.cg, tt.summary)
 if (err != nil) != tt.wantErr {

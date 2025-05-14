@@ -136,8 +136,19 @@ if length <= 0 {
 return nil, fmt.Errorf("length must be positive")
 }
 
-if _, err := RawToLV(cg, id.Agent, id.Seq); err == nil {
-    return nil, nil // Duplicate
+if id.Seq < 0 {
+    return nil, fmt.Errorf("sequence number cannot be negative: %d", id.Seq)
+}
+
+expectedSeq := NextSeqForAgent(cg, id.Agent)
+if id.Seq != expectedSeq {
+    // This condition covers several error cases:
+    // 1. Gap: id.Seq > expectedSeq (e.g., expected 1, got 2)
+    // 2. Overlap/Out-of-order: id.Seq < expectedSeq (e.g., expected 3, got 1 after adding [0,3))
+    // This also implicitly handles re-adding an identical operation if it were to start at an earlier seq,
+    // though re-adding an identical op starting at expectedSeq would be caught if we checked RawToLV
+    // *after* confirming seq is expected. However, by definition, if seq is expected, it's new.
+    return nil, fmt.Errorf("out of order sequence number for agent %s: expected %d, got %d", id.Agent, expectedSeq, id.Seq)
 }
 
 var parentLVs []LV
@@ -385,11 +396,30 @@ initialQueue := make([]LV, 0, len(from))
 tempVisitedForQueue := make(map[LV]struct{})
 
 for _, v := range from {
+    if cg.NextLV == 0 { // Empty graph
+        if v != 0 {
+            return nil, fmt.Errorf("Diff: 'from' LV %d is invalid for an empty graph (must be 0)", v)
+        }
+        // If v is 0 and graph is empty, it's a valid 'from' for an empty diff.
+    } else { // Non-empty graph
+        if v < 0 || v >= cg.NextLV {
+            return nil, fmt.Errorf("Diff: 'from' LV %d is out of bounds for graph with %d LVs", v, cg.NextLV)
+        }
+    }
+
     if _, seen := tempVisitedForQueue[v]; !seen {
         initialQueue = append(initialQueue, v)
         tempVisitedForQueue[v] = struct{}{}
     }
 }
+
+// If graph is empty and 'from' was valid (e.g. [0] or []), diff is empty.
+if cg.NextLV == 0 {
+    // This handles cases like from=[] or from=[0] with an empty graph.
+    // If 'from' contained invalid LVs for an empty graph, it would have errored out above.
+    return []LVRange{}, nil
+}
+
 queue := sortLVsAndDedup(initialQueue)
 
 processedInQueue := make(map[LV]struct{})
